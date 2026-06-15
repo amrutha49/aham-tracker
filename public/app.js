@@ -1,20 +1,20 @@
 const BACKEND_URL = "/api";
-
-// Initialize session tracking token from vault cache
 let USER_AUTH_TOKEN = localStorage.getItem('aham_jwt_access_token');
 
+// Global Frontend Core State Manager Mapping
 const state = {
     activeTraits: [],
     attainedTraits: [],
     isLocked: false,
+    traitsLockedAt: null,
     morningSaved: false,
-    morningData: { grateful: "", great: "", affirmations: [] },
+    morningData: { grateful: "", great: "", affirmations: ["", "", ""] },
     eveningData: { highlights: "", lessons: "" },
     aiAnalysisResult: null,
     history: []
 };
 
-// UI Elements Hooks
+// --- DOM ELEMENTS HOOKS ---
 const authOverlay = document.getElementById('auth-overlay');
 const authTitle = document.getElementById('auth-title');
 const authUsernameInput = document.getElementById('auth-username');
@@ -23,9 +23,28 @@ const authPrimaryBtn = document.getElementById('auth-primary-btn');
 const authToggleLink = document.getElementById('auth-toggle-link');
 const logoutBtn = document.getElementById('logout-btn');
 
+const traitInput = document.getElementById('trait-input');
+const addTraitBtn = document.getElementById('add-trait-btn');
+const traitCountLabel = document.getElementById('trait-count');
+const activeTraitsContainer = document.getElementById('active-blueprint-slots');
+const attainedTraitsContainer = document.getElementById('attained-blueprint-slots');
+const attainedTraitsCard = document.getElementById('attained-traits-card');
+const activateGridBtn = document.getElementById('activate-grid-btn');
+
+const saveMorningBtn = document.getElementById('save-morning-btn');
+const submitJournalBtn = document.getElementById('submit-journal-btn');
+const eveningLockOverlay = document.getElementById('evening-lock-overlay');
+const eveningCard = document.getElementById('evening-card');
+
+const analysisOutputCard = document.getElementById('analysis-output-card');
+const traitsMetricsContainer = document.getElementById('traits-metrics-container');
+const coachingText = document.getElementById('coaching-text');
+const reportDateTitle = document.getElementById('report-date-title');
+const systemStatusPill = document.getElementById('system-status-pill');
+
 let isLoginMode = true;
 
-// Auth Modal Form Controller Toggle
+// --- IDENTITY AUTHENTICATION ENGINE INTERFACES ---
 authToggleLink.addEventListener('click', () => {
     isLoginMode = !isLoginMode;
     authTitle.textContent = isLoginMode ? "Welcome to AHAM" : "Create Matrix Account";
@@ -34,20 +53,14 @@ authToggleLink.addEventListener('click', () => {
         ? `Don't have an account? <span id="auth-toggle-link" onclick="toggleAuthMode()">Sign Up</span>`
         : `Already have an account? <span id="auth-toggle-link" onclick="toggleAuthMode()">Log In</span>`;
 });
+window.toggleAuthMode = () => authToggleLink.click();
 
-window.toggleAuthMode = function() {
-    authToggleLink.click();
-};
-
-// Submit Identity Sign-In / Registration Pipeline
 authPrimaryBtn.addEventListener('click', async () => {
     const username = authUsernameInput.value.trim();
     const password = authPasswordInput.value.trim();
-
     if (!username || !password) return alert("Please fill out all identity credentials.");
 
     const endpoint = isLoginMode ? `${BACKEND_URL}/auth/login` : `${BACKEND_URL}/auth/signup`;
-    
     try {
         const response = await fetch(endpoint, {
             method: 'POST',
@@ -55,48 +68,23 @@ authPrimaryBtn.addEventListener('click', async () => {
             body: JSON.stringify({ username, password })
         });
         const data = await response.json();
-
         if (data.error) throw new Error(data.error);
 
         localStorage.setItem('aham_jwt_access_token', data.token);
         USER_AUTH_TOKEN = data.token;
-
-        authOverlay.classList.add('hidden-auth');
-        authUsernameInput.value = '';
-        authPasswordInput.value = '';
         syncStateFromServer();
-
     } catch (err) {
         alert(`Authentication Failed: ${err.message}`);
     }
 });
 
-// Clean Log Out Engine Click Handler
 logoutBtn.addEventListener('click', () => {
     localStorage.removeItem('aham_jwt_access_token');
     USER_AUTH_TOKEN = null;
     location.reload();
 });
 
-// Trait and Page Element DOM Hooks
-const traitInput = document.getElementById('trait-input');
-const addTraitBtn = document.getElementById('add-trait-btn');
-const traitCountLabel = document.getElementById('trait-count');
-const activeTraitsContainer = document.getElementById('active-blueprint-slots');
-const attainedTraitsContainer = document.getElementById('attained-blueprint-slots');
-const attainedTraitsCard = document.getElementById('attained-traits-card');
-const activateGridBtn = document.getElementById('activate-grid-btn');
-const submitJournalBtn = document.getElementById('submit-journal-btn');
-const saveMorningBtn = document.getElementById('save-morning-btn');
-const eveningLockOverlay = document.getElementById('evening-lock-overlay');
-const eveningCard = document.getElementById('evening-card');
-const analysisOutputCard = document.getElementById('analysis-output-card');
-const traitsMetricsContainer = document.getElementById('traits-metrics-container');
-const coachingText = document.getElementById('coaching-text');
-const reportDateTitle = document.getElementById('report-date-title');
-const systemStatusPill = document.getElementById('system-status-pill');
-
-// Global Tab Panel Navigation Flow Controls
+// --- CLIENT ROUTING TABS CONTROLLER ---
 document.querySelectorAll('.nav-item').forEach(button => {
     button.addEventListener('click', () => {
         const targetViewId = button.getAttribute('data-target');
@@ -108,80 +96,196 @@ document.querySelectorAll('.nav-item').forEach(button => {
     });
 });
 
-// Synchronize User Profile Records and Locks via Vault Encryption Headers
-async function syncStateFromServer() {
-    if (!USER_AUTH_TOKEN) {
-        authOverlay.classList.remove('hidden-auth');
-        return;
+// --- OPTIMIZED LIVE EDIT SAVING ENGINE ---
+function getMorningInputsData() {
+    const affs = [];
+    document.querySelectorAll('.affirmation-input').forEach(input => affs.push(input.value));
+    return {
+        grateful: document.getElementById('m-grateful').value,
+        great: document.getElementById('m-great').value,
+        affirmations: affs
+    };
+}
+
+function evaluateMorningButtonState() {
+    // Prevent button changes if the entire day cycle is closed out and finalized
+    const todayStr = new Date().toLocaleDateString('en-CA');
+    if (state.history.some(log => log.date === todayStr)) return;
+
+    const currentInputs = getMorningInputsData();
+    const hasChanges = currentInputs.grateful !== state.morningData.grateful ||
+                       currentInputs.great !== state.morningData.great ||
+                       JSON.stringify(currentInputs.affirmations) !== JSON.stringify(state.morningData.affirmations);
+
+    if (hasChanges) {
+        saveMorningBtn.textContent = "Save Changes";
+        saveMorningBtn.removeAttribute('disabled');
+    } else {
+        saveMorningBtn.textContent = "Morning Saved (Up to date)";
+        saveMorningBtn.setAttribute('disabled', 'true');
     }
-    
+}
+
+function bindMorningChangeListeners() {
+    const targets = [document.getElementById('m-grateful'), document.getElementById('m-great'), ...document.querySelectorAll('.affirmation-input')];
+    targets.forEach(el => {
+        el.removeEventListener('input', evaluateMorningButtonState);
+        el.addEventListener('input', evaluateMorningButtonState);
+    });
+}
+
+// --- CLOUD DATABASING SYNCHRONIZATION ---
+async function syncStateFromServer() {
+    if (!USER_AUTH_TOKEN) return authOverlay.classList.remove('hidden-auth');
     authOverlay.classList.add('hidden-auth');
 
     try {
-        const response = await fetch(`${BACKEND_URL}/state`, {
+        const todayStr = new Date().toLocaleDateString('en-CA');
+        const response = await fetch(`${BACKEND_URL}/state?localDate=${todayStr}`, {
             headers: { 'Authorization': `Bearer ${USER_AUTH_TOKEN}` }
         });
-
-        if (response.status === 401 || response.status === 403) {
-            localStorage.removeItem('aham_jwt_access_token');
-            authOverlay.classList.remove('hidden-auth');
-            return;
-        }
+        if (!response.ok) throw new Error("Session invalid");
 
         const serverData = await response.json();
-        
         state.activeTraits = serverData.activeTraits || [];
         state.attainedTraits = serverData.attainedTraits || [];
         state.history = serverData.history || [];
+        state.traitsLockedAt = serverData.traitsLockedAt || null;
 
-        const todayStr = new Date().toISOString().split('T')[0];
+        // Evaluate the active 21-day timeline barrier state parameters
+        if (state.traitsLockedAt) {
+            const elapsedDays = (new Date() - new Date(state.traitsLockedAt)) / (1000 * 60 * 60 * 24);
+            state.isLocked = elapsedDays < 21;
+        } else {
+            state.isLocked = false;
+        }
+
         const todaysLog = state.history.find(log => log.date === todayStr);
+        toggleInputsLock(false);
 
         if (todaysLog) {
+            // SCENARIO A: Complete Day Cycle Analyzed (Lock Down Completely)
             state.morningSaved = true;
             state.aiAnalysisResult = todaysLog.aiAnalysisResult;
             renderAnalyticsOutput();
             
-            saveMorningBtn.textContent = "Morning Saved";
+            saveMorningBtn.textContent = "Today's Entry Complete";
             saveMorningBtn.setAttribute('disabled', 'true');
             if(eveningLockOverlay) eveningLockOverlay.style.display = 'none';
             if(eveningCard) eveningCard.classList.remove('locked-state');
+
+            document.getElementById('m-grateful').value = todaysLog.morningData?.grateful || "";
+            document.getElementById('m-great').value = todaysLog.morningData?.great || "";
+            document.querySelectorAll('.affirmation-input').forEach((input, i) => {
+                input.value = todaysLog.morningData?.affirmations?.[i] || "";
+            });
+            document.getElementById('e-highlights').value = todaysLog.eveningData?.highlights || "";
+            document.getElementById('e-lessons').value = todaysLog.eveningData?.lessons || "";
+            
+            submitJournalBtn.setAttribute('disabled', 'true');
+            submitJournalBtn.textContent = "Today's Analysis Complete";
+            toggleInputsLock(true); 
+        } 
+        else if (serverData.currentMorningLog && serverData.currentMorningLog.date === todayStr) {
+            // SCENARIO B: Morning Log Saved But Active for Modifications
+            state.morningSaved = true;
+            state.morningData = {
+                grateful: serverData.currentMorningLog.grateful || "",
+                great: serverData.currentMorningLog.great || "",
+                affirmations: serverData.currentMorningLog.affirmations || ["", "", ""]
+            };
+
+            document.getElementById('m-grateful').value = state.morningData.grateful;
+            document.getElementById('m-great').value = state.morningData.great;
+            document.querySelectorAll('.affirmation-input').forEach((input, i) => {
+                input.value = state.morningData.affirmations[i] || "";
+            });
+
+            saveMorningBtn.textContent = "Morning Saved (Up to date)";
+            saveMorningBtn.setAttribute('disabled', 'true');
+            if(eveningLockOverlay) eveningLockOverlay.style.display = 'none';
+            if(eveningCard) eveningCard.classList.remove('locked-state');
+            
+            submitJournalBtn.removeAttribute('disabled');
+            submitJournalBtn.textContent = "Analyze My Day";
+        } 
+        else {
+            // SCENARIO C: Refresh New Day / Clean Slate
+            state.morningSaved = false;
+            state.morningData = { grateful: "", great: "", affirmations: ["", "", ""] };
+            
+            saveMorningBtn.textContent = "Save Morning Entry";
+            saveMorningBtn.removeAttribute('disabled');
+            if(eveningLockOverlay) eveningLockOverlay.style.display = 'flex';
+            if(eveningCard) eveningCard.classList.add('locked-state');
+
+            document.getElementById('m-grateful').value = "";
+            document.getElementById('m-great').value = "";
+            document.querySelectorAll('.affirmation-input').forEach(input => input.value = "");
+            document.getElementById('e-highlights').value = "";
+            document.getElementById('e-lessons').value = "";
+            analysisOutputCard.classList.add('hidden');
+            
+            submitJournalBtn.removeAttribute('disabled');
+            submitJournalBtn.textContent = "Analyze My Day";
         }
 
-        state.isLocked = state.activeTraits.length > 0;
+        bindMorningChangeListeners();
         renderIdentityGrids();
-        if (systemStatusPill) systemStatusPill.textContent = "💚 Synced";
+        systemStatusPill.textContent = "💚 Synced";
     } catch (err) {
         console.error(err);
-        if (systemStatusPill) systemStatusPill.textContent = "❌ Offline";
+        systemStatusPill.textContent = "❌ Offline";
     }
 }
 
+function toggleInputsLock(shouldLock) {
+    const fields = [
+        document.getElementById('m-grateful'), document.getElementById('m-great'),
+        document.getElementById('e-highlights'), document.getElementById('e-lessons'),
+        ...document.querySelectorAll('.affirmation-input')
+    ];
+    fields.forEach(f => {
+        if (shouldLock) f.setAttribute('disabled', 'true');
+        else f.removeAttribute('disabled');
+    });
+}
+
+// --- TRAIT MANAGEMENT GRID COUNTDOWN LOGIC ---
 async function saveTraitsToServer() {
     await fetch(`${BACKEND_URL}/traits`, {
         method: 'POST',
-        headers: { 
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${USER_AUTH_TOKEN}`
-        },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${USER_AUTH_TOKEN}` },
         body: JSON.stringify({ activeTraits: state.activeTraits, attainedTraits: state.attainedTraits })
     });
 }
 
+// --- FIXED IMMEDIATE RESPONSIVE ADD TRAIT TRAP ---
 function addTrait() {
     const value = traitInput.value.trim().toLowerCase();
     if (!value) return;
     if (state.activeTraits.length >= 5) return alert("Maximum 5 traits tracking limit reached.");
-    if (state.activeTraits.some(t => t.name === value) || state.attainedTraits.includes(value)) return alert("Trait tracking item already active.");
+    if (state.activeTraits.some(t => t.name === value) || state.attainedTraits.includes(value)) {
+        return alert("Trait tracking item already active.");
+    }
     
+    // Push the element immediately into memory so it can't be dropped during async saves
     state.activeTraits.push({ name: value, score: 0 });
     traitInput.value = '';
+    
     renderIdentityGrids();
+
+    // FIXED OPTIMIZATION: If the user is adding traits *after* the initial 21-day lock was already active,
+    // we auto-trigger a background sync to keep MongoDB up to date immediately
+    if (state.traitsLockedAt && state.isLocked) {
+        saveTraitsToServer();
+    }
 }
 
-window.removeTrait = function(index) {
-    if (state.isLocked) return;
+window.removeTrait = async (index) => {
+    if (state.isLocked) return alert("Cannot delete traits during active habit window cycles.");
     state.activeTraits.splice(index, 1);
+    await saveTraitsToServer();
     renderIdentityGrids();
 };
 
@@ -192,7 +296,7 @@ function renderIdentityGrids() {
         li.className = 'trait-item';
         li.innerHTML = state.isLocked 
             ? `<span class="trait-name">${trait.name}</span><span class="trait-score-lbl">${trait.score}%</span>`
-            : `<span class="trait-name">${trait.name}</span><button class="remove-trait-btn" onclick="removeTrait(${index})">Delete</button>`;
+            : `<span class="trait-name">${trait.name}</span><div style="display:flex; gap:10px; align-items:center;"><span class="trait-score-lbl">${trait.score}%</span><button class="remove-trait-btn" onclick="removeTrait(${index})">Delete</button></div>`;
         activeTraitsContainer.appendChild(li);
     });
 
@@ -210,46 +314,107 @@ function renderIdentityGrids() {
     }
 
     traitCountLabel.textContent = state.activeTraits.length;
-    activateGridBtn.toggleAttribute('disabled', state.activeTraits.length === 0 || state.isLocked);
     
-    if (state.isLocked) {
-        activateGridBtn.textContent = "Identity Grid Active";
-        const rowElement = document.getElementById('trait-input-row');
-        if (rowElement) rowElement.style.display = 'none';
+    const rowElement = document.getElementById('trait-input-row');
+    const countdownBanner = document.getElementById('lock-countdown-banner');
+    const countdownText = document.getElementById('lock-countdown-text');
+
+    if (state.traitsLockedAt && state.isLocked) {
+        const elapsedDays = (new Date() - new Date(state.traitsLockedAt)) / (1000 * 60 * 60 * 24);
+        const daysRemaining = Math.max(0, Math.ceil(21 - elapsedDays));
+
+        countdownText.textContent = `Identity Matrix Locked. ${daysRemaining} days left until modification window opens.`;
+        countdownBanner.classList.remove('hidden');
+        
+        // Allow adding incremental upgrades only if slots are open under the 5 cap limit
+        if (state.activeTraits.length < 5) {
+            if (rowElement) rowElement.style.display = 'flex';
+            activateGridBtn.textContent = "Lock Additional Traits";
+            activateGridBtn.removeAttribute('disabled');
+        } else {
+            if (rowElement) rowElement.style.display = 'none';
+            activateGridBtn.textContent = "Identity Matrix Active (Fully Locked)";
+            activateGridBtn.setAttribute('disabled', 'true');
+        }
     } else {
-        activateGridBtn.textContent = "Save & Start Day";
-        const rowElement = document.getElementById('trait-input-row');
+        countdownBanner.classList.add('hidden');
         if (rowElement) rowElement.style.display = 'flex';
+        activateGridBtn.textContent = "Lock & Activate 21-Day Cycle";
+        activateGridBtn.toggleAttribute('disabled', state.activeTraits.length === 0);
     }
 }
 
 addTraitBtn.addEventListener('click', addTrait);
 traitInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') addTrait(); });
 
+// --- FIXED FRONTEND ACTIVATE ENGINE ---
 activateGridBtn.addEventListener('click', async () => {
     if (state.activeTraits.length === 0) return;
-    state.isLocked = true;
-    await saveTraitsToServer();
-    renderIdentityGrids();
-    document.getElementById('nav-morning-btn').click();
-});
+    
+    activateGridBtn.textContent = "⏳ Securing Lock Patterns...";
+    activateGridBtn.setAttribute('disabled', 'true');
+    
+    try {
+        // Explicitly stringify the state arrays to guarantee accuracy over the network pipeline
+        const payload = {
+            activeTraits: [...state.activeTraits],
+            attainedTraits: [...state.attainedTraits],
+            lockAction: true
+        };
 
-saveMorningBtn.addEventListener('click', () => {
-    state.morningSaved = true;
-    let affs = [];
-    document.querySelectorAll('.affirmation-input').forEach(input => affs.push(input.value));
-    
-    state.morningData = {
-        grateful: document.getElementById('m-grateful').value,
-        great: document.getElementById('m-great').value,
-        affirmations: affs
-    };
-    
-    if(eveningLockOverlay) eveningLockOverlay.style.display = 'none';
-    if(eveningCard) eveningCard.classList.remove('locked-state');
-    
-    saveMorningBtn.textContent = "Morning Saved";
+        const response = await fetch(`${BACKEND_URL}/traits`, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json', 
+                'Authorization': `Bearer ${USER_AUTH_TOKEN}` 
+            },
+            body: JSON.stringify(payload)
+        });
+        
+        const data = await response.json();
+        if (data.success) {
+            // Update the global frontend memory mapping with the true server data response
+            state.traitsLockedAt = data.traitsLockedAt;
+            state.activeTraits = data.activeTraits;
+            state.isLocked = true;
+            
+            renderIdentityGrids();
+            
+            // Ux Navigation Transition: Automatically skip over to the morning entry tab view
+            document.getElementById('nav-morning-btn').click();
+        } else {
+            throw new Error(data.error || "Action restriction fault.");
+        }
+    } catch (err) {
+        alert(`Failed to activate grid locks: ${err.message}`);
+        renderIdentityGrids();
+    }
+});
+// --- DATA PROCESSING TRANSMISSIONS ---
+saveMorningBtn.addEventListener('click', async () => {
+    const payload = getMorningInputsData();
+    saveMorningBtn.textContent = "⏳ Saving Changes...";
     saveMorningBtn.setAttribute('disabled', 'true');
+
+    try {
+        const response = await fetch(`${BACKEND_URL}/morning-entry`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${USER_AUTH_TOKEN}` },
+            body: JSON.stringify(payload)
+        });
+        if (!response.ok) throw new Error("Network save fault");
+
+        state.morningSaved = true;
+        state.morningData = payload;
+
+        if (eveningLockOverlay) eveningLockOverlay.style.display = 'none';
+        if (eveningCard) eveningCard.classList.remove('locked-state');
+        
+        saveMorningBtn.textContent = "Morning Saved (Up to date)";
+    } catch(err) {
+        alert(`Failed to save changes: ${err.message}`);
+        evaluateMorningButtonState();
+    }
 });
 
 submitJournalBtn.addEventListener('click', async () => {
@@ -263,24 +428,14 @@ submitJournalBtn.addEventListener('click', async () => {
         lessons: document.getElementById('e-lessons').value
     };
 
-    const payload = {
-        date: new Date().toISOString().split('T')[0],
-        morningData: state.morningData,
-        eveningData: state.eveningData
-    };
-
     try {
         const response = await fetch(`${BACKEND_URL}/analyze-day`, {
             method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${USER_AUTH_TOKEN}`
-            },
-            body: JSON.stringify(payload)
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${USER_AUTH_TOKEN}` },
+            body: JSON.stringify({ morningData: state.morningData, eveningData: state.eveningData })
         });
-
         const result = await response.json();
-        if(result.error) throw new Error(result.error);
+        if (result.error) throw new Error(result.error);
 
         state.activeTraits = result.stateUpdate.activeTraits;
         state.attainedTraits = result.stateUpdate.attainedTraits;
@@ -288,10 +443,11 @@ submitJournalBtn.addEventListener('click', async () => {
 
         renderAnalyticsOutput();
         renderIdentityGrids();
-
+        
+        submitJournalBtn.textContent = "Today's Analysis Complete";
+        toggleInputsLock(true); 
     } catch (err) {
-        alert(`Server Error: ${err.message}`);
-    } finally {
+        alert(`Server Analysis Error: ${err.message}`);
         submitJournalBtn.textContent = "Analyze My Day";
         submitJournalBtn.removeAttribute('disabled');
     }
@@ -323,5 +479,4 @@ function renderAnalyticsOutput() {
     analysisOutputCard.classList.remove('hidden');
 }
 
-// Initial Sync Execution Core Trigger
 syncStateFromServer();
