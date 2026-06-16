@@ -13,7 +13,7 @@ const state = {
     aiAnalysisResult: null,
     history: []
 };
-
+window.state = state;
 // --- DOM ELEMENTS HOOKS ---
 const authOverlay = document.getElementById('auth-overlay');
 const authTitle = document.getElementById('auth-title');
@@ -140,19 +140,24 @@ async function syncStateFromServer() {
     authOverlay.classList.add('hidden-auth');
 
     try {
+        // 1. Establish the precise date string for the user's current local session
         const todayStr = new Date().toLocaleDateString('en-CA');
+        
+        // 2. Fetch the latest user document using the local date as a verification query
         const response = await fetch(`${BACKEND_URL}/state?localDate=${todayStr}`, {
             headers: { 'Authorization': `Bearer ${USER_AUTH_TOKEN}` }
         });
         if (!response.ok) throw new Error("Session invalid");
 
         const serverData = await response.json();
+        
+        // 3. Update global memory mapping
         state.activeTraits = serverData.activeTraits || [];
         state.attainedTraits = serverData.attainedTraits || [];
         state.history = serverData.history || [];
         state.traitsLockedAt = serverData.traitsLockedAt || null;
 
-        // Evaluate the active 21-day timeline barrier state parameters
+        // 4. Evaluate the 21-day behavioral lock status
         if (state.traitsLockedAt) {
             const elapsedDays = (new Date() - new Date(state.traitsLockedAt)) / (1000 * 60 * 60 * 24);
             state.isLocked = elapsedDays < 21;
@@ -160,20 +165,23 @@ async function syncStateFromServer() {
             state.isLocked = false;
         }
 
+        // 5. DATA CLEANING: Check if a cycle is already finished for TODAY
         const todaysLog = state.history.find(log => log.date === todayStr);
+        
+        // Global Pre-Reset: Default release all input blockers before evaluating specific scenarios
         toggleInputsLock(false);
 
         if (todaysLog) {
-            // SCENARIO A: Complete Day Cycle Analyzed (Lock Down Completely)
+            /** 
+             * SCENARIO A: Cycle Completed for TODAY 
+             * Action: Fetch analysis from history, display it, and lock everything down.
+             */
+            console.log("🔒 Scenario A: Entry cycle complete for today.");
             state.morningSaved = true;
             state.aiAnalysisResult = todaysLog.aiAnalysisResult;
             renderAnalyticsOutput();
             
-            saveMorningBtn.textContent = "Today's Entry Complete";
-            saveMorningBtn.setAttribute('disabled', 'true');
-            if(eveningLockOverlay) eveningLockOverlay.style.display = 'none';
-            if(eveningCard) eveningCard.classList.remove('locked-state');
-
+            // Populate fields with the completed data
             document.getElementById('m-grateful').value = todaysLog.morningData?.grateful || "";
             document.getElementById('m-great').value = todaysLog.morningData?.great || "";
             document.querySelectorAll('.affirmation-input').forEach((input, i) => {
@@ -182,13 +190,25 @@ async function syncStateFromServer() {
             document.getElementById('e-highlights').value = todaysLog.eveningData?.highlights || "";
             document.getElementById('e-lessons').value = todaysLog.eveningData?.lessons || "";
             
-            submitJournalBtn.setAttribute('disabled', 'true');
+            // Lock UI controls
+            saveMorningBtn.textContent = "Today's Entry Complete";
+            saveMorningBtn.setAttribute('disabled', 'true');
             submitJournalBtn.textContent = "Today's Analysis Complete";
+            submitJournalBtn.setAttribute('disabled', 'true');
+            
+            if(eveningLockOverlay) eveningLockOverlay.style.display = 'none';
+            if(eveningCard) eveningCard.classList.remove('locked-state');
+            
             toggleInputsLock(true); 
         } 
         else if (serverData.currentMorningLog && serverData.currentMorningLog.date === todayStr) {
-            // SCENARIO B: Morning Log Saved But Active for Modifications
+            /** 
+             * SCENARIO B: Morning Entry Exists for TODAY
+             * Action: Populate morning data, allow editing/saving changes, unlock evening section.
+             */
+            console.log("☀️ Scenario B: Morning data active for today.");
             state.morningSaved = true;
+            state.aiAnalysisResult = null; // Flush any ghost analysis from yesterday
             state.morningData = {
                 grateful: serverData.currentMorningLog.grateful || "",
                 great: serverData.currentMorningLog.great || "",
@@ -201,6 +221,11 @@ async function syncStateFromServer() {
                 input.value = state.morningData.affirmations[i] || "";
             });
 
+            // Ensure evening is clean for fresh input
+            document.getElementById('e-highlights').value = "";
+            document.getElementById('e-lessons').value = "";
+            if (analysisOutputCard) analysisOutputCard.classList.add('hidden');
+
             saveMorningBtn.textContent = "Morning Saved (Up to date)";
             saveMorningBtn.setAttribute('disabled', 'true');
             if(eveningLockOverlay) eveningLockOverlay.style.display = 'none';
@@ -210,44 +235,63 @@ async function syncStateFromServer() {
             submitJournalBtn.textContent = "Analyze My Day";
         } 
         else {
-            // SCENARIO C: Refresh New Day / Clean Slate
+            /** 
+             * SCENARIO C: CLEAN SLATE (New Day or No Entry Found)
+             * Action: Wipe all fields, reset buttons, and ensure all inputs are unlocked.
+             */
+            console.log("✨ Scenario C: Starting fresh day cycle.");
             state.morningSaved = false;
+            state.aiAnalysisResult = null; 
             state.morningData = { grateful: "", great: "", affirmations: ["", "", ""] };
+            state.eveningData = { highlights: "", lessons: "" };
             
-            saveMorningBtn.textContent = "Save Morning Entry";
-            saveMorningBtn.removeAttribute('disabled');
-            if(eveningLockOverlay) eveningLockOverlay.style.display = 'flex';
-            if(eveningCard) eveningCard.classList.add('locked-state');
-
+            // UI Scrubbing
             document.getElementById('m-grateful').value = "";
             document.getElementById('m-great').value = "";
             document.querySelectorAll('.affirmation-input').forEach(input => input.value = "");
             document.getElementById('e-highlights').value = "";
             document.getElementById('e-lessons').value = "";
-            analysisOutputCard.classList.add('hidden');
-            
-            submitJournalBtn.removeAttribute('disabled');
+            if (analysisOutputCard) analysisOutputCard.classList.add('hidden');
+
+            // Reset Controls
+            saveMorningBtn.textContent = "Save Morning Entry";
+            saveMorningBtn.removeAttribute('disabled');
             submitJournalBtn.textContent = "Analyze My Day";
+            submitJournalBtn.removeAttribute('disabled');
+            
+            if(eveningLockOverlay) eveningLockOverlay.style.display = 'flex';
+            if(eveningCard) eveningCard.classList.add('locked-state');
         }
 
+        // Initialize listeners and UI grid components
         bindMorningChangeListeners();
         renderIdentityGrids();
         systemStatusPill.textContent = "💚 Synced";
+        
     } catch (err) {
-        console.error(err);
+        console.error("Sync Error:", err);
         systemStatusPill.textContent = "❌ Offline";
     }
 }
 
+// --- ENFORCED INPUT GATEKEEPER LOCK MECHANISM ---
 function toggleInputsLock(shouldLock) {
     const fields = [
-        document.getElementById('m-grateful'), document.getElementById('m-great'),
-        document.getElementById('e-highlights'), document.getElementById('e-lessons'),
+        document.getElementById('m-grateful'), 
+        document.getElementById('m-great'),
+        document.getElementById('e-highlights'), 
+        document.getElementById('e-lessons'),
         ...document.querySelectorAll('.affirmation-input')
     ];
+    
     fields.forEach(f => {
-        if (shouldLock) f.setAttribute('disabled', 'true');
-        else f.removeAttribute('disabled');
+        if (!f) return;
+        if (shouldLock) {
+            f.setAttribute('disabled', 'true');
+        } else {
+            // THE FIX: Completely delete the disabled property from the HTML markup
+            f.removeAttribute('disabled'); 
+        }
     });
 }
 
@@ -417,6 +461,7 @@ saveMorningBtn.addEventListener('click', async () => {
     }
 });
 
+// --- UPDATED API ANALYZE TRIGGER EVENT ---
 submitJournalBtn.addEventListener('click', async () => {
     if (!state.morningSaved) return;
 
@@ -428,11 +473,18 @@ submitJournalBtn.addEventListener('click', async () => {
         lessons: document.getElementById('e-lessons').value
     };
 
+    // Grab your current local browser calendar date representation string
+    const strictLocalDate = new Date().toLocaleDateString('en-CA');
+
     try {
         const response = await fetch(`${BACKEND_URL}/analyze-day`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${USER_AUTH_TOKEN}` },
-            body: JSON.stringify({ morningData: state.morningData, eveningData: state.eveningData })
+            body: JSON.stringify({ 
+                morningData: state.morningData, 
+                eveningData: state.eveningData,
+                localDate: strictLocalDate // 🔥 FIXED: Pass the local date string to the server payload
+            })
         });
         const result = await response.json();
         if (result.error) throw new Error(result.error);
@@ -480,3 +532,4 @@ function renderAnalyticsOutput() {
 }
 
 syncStateFromServer();
+window.syncStateFromServer = syncStateFromServer;
