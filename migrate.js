@@ -4,36 +4,19 @@ import { GoogleGenAI } from '@google/genai';
 
 dotenv.config();
 
-if (!process.env.MONGODB_URI || !process.env.GEMINI_API_KEY) {
-    console.error("❌ Migration failed: Missing MONGODB_URI or GEMINI_API_KEY in .env");
-    process.exit(1);
-}
-
-// Re-declare schema locally for isolation
-const userSchema = new mongoose.Schema({
-    username: String,
-    history: { type: Array, default: [] }
-});
-const User = mongoose.model('User', userSchema);
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
-const CRISP_SUMMARY_PROMPT_INSTRUCTIONS = 
-    "Identify the SINGLE most important, memorable, or defining real-world event or activity of the user's day from this text. " +
-    "Distill it into a ultra-short, simple, objective one-sentence log starting with a dynamic past-tense verb. " +
-    "🎯 MAXIMUM LENGTH CONSTRAINT: Keep the summary under 6 to 10 words total (e.g., 'Visited Half Moon Bay with my husband'). " +
-    "❌ CRITICAL RESTRICTION: Absolutely avoid flowery, dramatic, or generic AI meta-language. " +
-    "Keep it entirely factual, minimal, and grounded. " +
-    "Return your response strictly as a clean JSON object structure with no markdown formatting: " +
-    "{\"keyEvent\": \"Your clean summary string here\"}";
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function runOneTimeMigration() {
-    console.log("🚀 Connecting to Cloud MongoDB Atlas for manual migration script execution...");
+    console.log("Connecting to Cloud MongoDB Atlas for manual migration script execution...");
     await mongoose.connect(process.env.MONGODB_URI);
     
     try {
         const users = await User.find({});
-        console.log(` Auditing ${users.length} production user profiles...`);
+        console.log(`🤖 Auditing ${users.length} production user profiles...`);
         let globalMigrationCount = 0;
+        
+        // 🎯 Initialize a counter to watch our Requests Per Minute window
+        let apiRequestsInThisMinute = 0;
 
         for (let user of users) {
             let userNeedsSaving = false;
@@ -46,16 +29,27 @@ async function runOneTimeMigration() {
                 const isTooLong = wordCount > 10;
 
                 if (isMissing || isTooLong) {
+                    // Check if we are about to hit our 5-request ceiling rule
+                    if (apiRequestsInThisMinute >= 4) {
+                        console.log("⏳ Approaching rate limit boundary (4 requests sent). Pausing for 65 seconds to clear the bucket...");
+                        await sleep(65000); // 65 seconds guarantees the window completely resets
+                        apiRequestsInThisMinute = 0; // Reset counter
+                    }
+
                     console.log(`⚠️  Flagged long summary (${wordCount} words) for ${user.username} on ${log.date}. Cleaning...`);
                     
                     const morningText = JSON.stringify(log.morningData || {});
                     const eveningText = JSON.stringify(log.eveningData || {});
 
+                    // Keep using the lightning-fast Flash model
                     const response = await ai.models.generateContent({
                         model: "gemini-2.5-flash",
                         contents: CRISP_SUMMARY_PROMPT_INSTRUCTIONS + "\n\nJournal Content:\nMorning: " + morningText + "\nEvening: " + eveningText,
                         config: { responseMimeType: "application/json" }
                     });
+
+                    // Track that an API call was executed successfully
+                    apiRequestsInThisMinute++;
 
                     let textResponse = response.text.trim();
                     if (textResponse.startsWith("```json")) textResponse = textResponse.substring(7, textResponse.length - 3).trim();
@@ -85,5 +79,28 @@ async function runOneTimeMigration() {
         process.exit(0);
     }
 }
+
+if (!process.env.MONGODB_URI || !process.env.GEMINI_API_KEY) {
+    console.error("❌ Migration failed: Missing MONGODB_URI or GEMINI_API_KEY in .env");
+    process.exit(1);
+}
+
+// Re-declare schema locally for isolation
+const userSchema = new mongoose.Schema({
+    username: String,
+    history: { type: Array, default: [] }
+});
+const User = mongoose.model('User', userSchema);
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+const CRISP_SUMMARY_PROMPT_INSTRUCTIONS = 
+    "Identify the SINGLE most important, memorable, or defining real-world event or activity of the user's day from this text. " +
+    "Distill it into a ultra-short, simple, objective one-sentence log starting with a dynamic past-tense verb. " +
+    "🎯 MAXIMUM LENGTH CONSTRAINT: Keep the summary under 6 to 10 words total (e.g., 'Visited Half Moon Bay with my husband'). " +
+    "❌ CRITICAL RESTRICTION: Absolutely avoid flowery, dramatic, or generic AI meta-language. " +
+    "Keep it entirely factual, minimal, and grounded. " +
+    "Return your response strictly as a clean JSON object structure with no markdown formatting: " +
+    "{\"keyEvent\": \"Your clean summary string here\"}";
+
 
 runOneTimeMigration();
